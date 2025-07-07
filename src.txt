@@ -1,0 +1,3 @@
+fn add(x, y) x + y
+
+log(add(1, 2), add)
