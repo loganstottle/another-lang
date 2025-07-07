@@ -5,10 +5,6 @@ please ignore the bad code, i do not know what i'm doing
 ```
 > x = 1
 return: 1
-> fn(a, b) a + b
-return: function
-> x = 1
-return: 1
 > y = fn(a, b) a + b
 return: function
 > log(x, y, y(x, 1))
