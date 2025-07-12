@@ -1,5 +1,24 @@
-use crate::token::{Token, TokenKind};
-use crate::interpret::*;
+use crate::token::{Token, TokenKind, get_type};
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Signature {
+    pub name: String,
+    pub args: Vec<Arg>,
+    pub return_type: Type
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Arg {
+    pub name: String,
+    pub typ: Type
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Function {
+    pub name: String,
+    pub args: Vec<String>,
+    pub body: Block
+}
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum BinOp {
@@ -10,39 +29,66 @@ pub enum BinOp {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum Value {
+pub enum Literal {
     Number(f64),
     String(String),
     Boolean(bool),
-    List(Vec<Value>),
-    Function(Function),
-    Null,
 }
 
-impl Value {
-    pub fn string(self) -> String {
+#[derive(Debug, PartialEq, Clone)]
+pub enum Type {
+    U8, U16, U32, U64,
+    I8, I16, I32, I64, 
+    F32, F64,
+    Char,
+    Boolean,
+    Pointer(Box<Type>),
+    Void,
+    Invalid
+}
+
+fn convert_binop(kind: TokenKind) -> Option<BinOp> {
+    match kind {
+        TokenKind::Add => Some(BinOp::Add),
+        TokenKind::Subtract => Some(BinOp::Subtract),
+        TokenKind::Multiply => Some(BinOp::Multiply),
+        TokenKind::Divide => Some(BinOp::Divide),
+        _ => None
+    }
+}
+
+impl BinOp {
+    fn prec(&mut self) -> usize {
         match self {
-            Value::Number(n) => n.to_string(),
-            Value::String(s) => s,
-            Value::Boolean(b) => String::from("bool"),
-            Value::List(l) => String::from("list"),
-            Value::Function(f) => String::from("function"),
-            Value::Null => String::from("NULL"),
+            BinOp::Add => 2,
+            BinOp::Subtract => 2,
+            BinOp::Multiply => 1,
+            BinOp::Divide => 1,
+        }
+    }
+
+    fn assoc(&mut self) -> usize {
+        match self {
+            BinOp::Add => 0,
+            BinOp::Subtract => 0,
+            BinOp::Multiply => 0,
+            BinOp::Divide => 0,
         }
     }
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expr {
-    Literal(Value),
+    Literal(Literal),
     Variable(String),
     Binary {
         op: BinOp,
         left: Box<Expr>,
         right: Box<Expr>
     },
-    FnCall(Box<Expr>, Vec<Expr>),
-    FnDefine(String, Vec<String>, Block)
+    FnCall(String, Vec<Expr>),
+    Reference(Box<Expr>),
+    Dereference(Box<Expr>),
 }
 
 pub type Block = Vec<Stmt>;
@@ -51,116 +97,23 @@ pub type Block = Vec<Stmt>;
 pub enum Stmt {
     Expr(Expr),
     Return(Expr),
-    Assignment(String, Expr)
+    VarDeclare(Type, String, Expr),
+    VarAssign(String, Expr),
+    FnDefine(Signature, Block)
 }
 
-impl Expr {
-    pub fn eval(self, context: &mut Context) -> Value {
-        match self {
-            Expr::Literal(val) => val.clone(),
-            Expr::Variable(name) => {
-                if let Some(value) = context.variables.get(&name) {
-                    return value.clone()
-                }
-
-                if let Some(value) = context.functions.get(&name) {
-                    return Value::Function(value.clone())
-                }
-            
-                println!("variable not found: {}", name);
-
-                Value::Null
-            },
-            Expr::Binary {op, left, right } => {
-                let lhs = left.eval(context);
-                let rhs = right.eval(context);
-
-                match (lhs, rhs) {
-                    (Value::String(s1), Value::String(s2)) => Value::String(s1 + s2.as_str()),
-                    (Value::Number(l), Value::Number(r)) => Value::Number(
-                        match op {
-                            BinOp::Add => l + r,
-                            BinOp::Subtract => l - r,
-                            BinOp::Multiply => l * r,
-                            BinOp::Divide => l / r
-                        }
-                    ),
-                    _ => panic!("wrong operand types")
-                }
-            },
-            Expr::FnDefine(name, args, body) => {
-                let func = Function::Declared(Declared { name: name.clone(), args: args.clone(), body: body.clone() });
-                
-                context.functions.insert(name, func.clone());
-                
-                Value::Function(func)
-            },
-            Expr::FnCall(func, args) => {
-                match *func {
-                    Expr::Variable(name) => {
-                        if let Some(mutfunc) = context.functions.get_mut(&name) { 
-                            return mutfunc.clone().call(context, args)
-                        } else {
-                            panic!("function not defined")
-                        }
-                    },
-                    Expr::FnDefine(_, names, body) => {
-                        let mut ctx = Context::new();
-
-                        ctx.variables = context.variables.clone();
-                        ctx.functions = context.functions.clone();
-
-                        for (name, arg) in names.iter().zip(args) {
-                            ctx.variables.insert(name.clone(), arg.eval(context));
-                        }
-
-                        let mut val = Value::Null;
-
-                        for stmt in body {
-                            match stmt {
-                                Stmt::Return(expr) => return expr.eval(&mut ctx),
-                                _ => val = stmt.run(&mut ctx)
-                            };
-                        }
-
-                        val
-                    },
-                    _ => panic!("invalid function call")
-                }
-            }
-        }
-    }
-}
-
-impl Stmt {
-    pub fn run(self, context: &mut Context) -> Value {
-        match self {
-            Stmt::Assignment(name, expr) => {
-                let value = expr.eval(context);
-
-                context.variables.insert(name.clone(), value.clone());
-                return value;
-            },
-            Stmt::Return(expr) => expr.eval(context),
-            Stmt::Expr(expr) => expr.eval(context),
-        }
-    }
-}
-
-pub struct Parser<'a> {
+pub struct Parser {
     tokens: Vec<Token>,
     cursor: usize,
     pub program: Vec<Stmt>,
-    context: &'a mut Context,
 }
 
-impl<'a> Parser<'a> {
-    pub fn new(context: &'a mut Context, tokens: Vec<Token>) -> Self {
+impl Parser {
+    pub fn new(tokens: Vec<Token>) -> Self {
         Self {
-            tokens: tokens,
+            tokens,
             cursor: 0,
             program: Vec::new(),
-            context
         }
     }
 
@@ -176,152 +129,234 @@ impl<'a> Parser<'a> {
         self.tokens[self.cursor].clone()
     }
 
-    fn parse_term(&mut self) -> Expr {
-        let factor = self.parse_factor();
-        
+    fn expect(&self, kind: TokenKind) {
         if !self.ok() {
-            return factor
+            panic!("(VM:{}) expected {:?}, found EOF",self.peek().line, kind);
         }
 
-        let operator = match self.peek().kind {
-            TokenKind::Multiply => BinOp::Multiply,
-            TokenKind::Divide => BinOp::Divide,
-            _ => return factor
-        };
-        
-        self.cursor += 1;
-
-        Expr::Binary{op: operator, left: Box::new(factor), right: Box::new(self.parse_term()) }
+        if self.peek().kind != kind {
+            panic!("(VM:{}) expected {:?}, found {:?}", self.peek().line, kind, self.peek().kind);
+        }
     }
 
-    fn parse_fn_call(&mut self, func: Expr) -> Expr {
+    fn parse_fn_call(&mut self, name: String) -> Expr {
         self.cursor += 1;
 
         let mut args: Vec<Expr> = Vec::new();
-        
+
         if self.peek().kind == TokenKind::CloseParen {
             self.cursor += 1;
-            return Expr::FnCall(Box::new(func), args);
+            return Expr::FnCall(name, args);
         }
 
         while self.peek().kind != TokenKind::CloseParen {
             args.push(self.parse_expr());
-            
+
             if self.peek().kind == TokenKind::CloseParen {
                 self.cursor += 1;
                 break
             }
 
-            assert!(self.peek().kind == TokenKind::Comma);
+            self.expect(TokenKind::Comma);
             self.cursor += 1;
         }
 
-        return Expr::FnCall(Box::new(func), args);
+        Expr::FnCall(name, args)
     }
 
-    fn parse_factor(&mut self) -> Expr {
+    fn convert_type(&mut self) -> Option<Type> {
+        if let Some(t) = get_type(self.peek().value) {
+            let mut typ = match t {
+                TokenKind::U8 => Type::U8,
+                TokenKind::U16 => Type::U16,
+                TokenKind::U32 => Type::U32,
+                TokenKind::U64 => Type::U64,
+                TokenKind::I8 => Type::I8,
+                TokenKind::I16 => Type::I16,
+                TokenKind::I32 => Type::I32,
+                TokenKind::I64 => Type::I64,
+                TokenKind::F32 => Type::F32,
+                TokenKind::F64 => Type::F64,
+                TokenKind::Char => Type::Char,
+                TokenKind::Bool => Type::Boolean,
+                _ => panic!("{} is not type", self.peek().value)
+            };
+
+            self.cursor += 1;
+
+            while self.peek().kind == TokenKind::Multiply {
+                typ = Type::Pointer(Box::new(typ));
+                self.cursor += 1;
+            }
+
+            return Some(typ)
+        }
+
+        None
+    }
+
+    fn parse_block(&mut self) -> Block {
+        let mut block: Block = Vec::new();
+
+        self.expect(TokenKind::OpenCurly);
+        self.cursor += 1;
+
+        while self.peek().kind != TokenKind::CloseCurly {
+            let stmt = self.parse_statement();
+
+            block.push(stmt.clone());
+
+            if let Stmt::FnDefine(_, _) = stmt {
+            } else {
+                self.expect(TokenKind::Semi);
+                self.cursor += 1;
+            }
+        }
+
+        self.cursor += 1;
+
+        block
+    }
+
+    fn parse_primary(&mut self) -> Expr {
         let next = self.peek();
         self.cursor += 1;
 
         match next.kind {
-            TokenKind::NumberLiteral => Expr::Literal(Value::Number(next.value.parse().unwrap())),
-            TokenKind::StringLiteral => Expr::Literal(Value::String(next.value)),
+            TokenKind::NumberLiteral => Expr::Literal(Literal::Number(next.value.parse().unwrap())),
+            TokenKind::StringLiteral => Expr::Literal(Literal::String(next.value)),
+            TokenKind::TrueLiteral => Expr::Literal(Literal::Boolean(true)),
+            TokenKind::FalseLiteral => Expr::Literal(Literal::Boolean(false)),
             TokenKind::OpenParen => {
                 let expr = self.parse_expr();
 
-                assert!(self.peek().kind == TokenKind::CloseParen);
+                self.expect(TokenKind::CloseParen);
                 self.cursor += 1;
-
-                if self.ok() && self.peek().kind == TokenKind::OpenParen {
-                    return self.parse_fn_call(expr)
-                }
 
                 expr
             },
-            TokenKind::Variable => {
-                let func = Expr::Variable(next.value);
-
+            TokenKind::Identifier => {
                 if self.ok() && self.peek().kind == TokenKind::OpenParen {
-                    return self.parse_fn_call(func)
+                    return self.parse_fn_call(next.value)
                 }
 
-                func
+                Expr::Variable(next.value)
             },
-            TokenKind::Fn => {
-                let mut name = String::new();
-
-                match self.peek().kind {
-                    TokenKind::Variable => {
-                        name = self.peek().value;
-                        self.cursor += 1;
-                    },
-                    TokenKind::OpenParen => (),
-                    _ => panic!("bad token while looking for function name")
-                }
-
-                assert!(self.peek().kind == TokenKind::OpenParen);
-                self.cursor += 1;
-
-                let mut args: Vec<String> = Vec::new();
-
-                while self.peek().kind != TokenKind::CloseParen {
-                    args.push(self.peek().value);
-
-                    self.cursor += 1;
-
-                    if self.peek().kind == TokenKind::CloseParen {
-                        break
-                    }
-
-                    assert!(self.peek().kind == TokenKind::Comma);
-                    self.cursor += 1;
-                }
-
-                self.cursor += 1;
-                
-                Expr::FnDefine(name, args, vec![self.parse_statement()])
-            },
-            _ => panic!("invalid expression at {:?}", next.kind)
+            TokenKind::Multiply => Expr::Dereference(Box::new(self.parse_expr())),
+            TokenKind::Amp => Expr::Reference(Box::new(self.parse_expr())),
+            _ => panic!("(VM:{}) expected expression, found {:?}", next.line, next.kind)
         }
     }
 
     fn parse_expr(&mut self) -> Expr {
-        let mut expr = self.parse_term();
-        
+        self.parse_expr_prec(usize::MAX)
+    }
+
+    fn parse_expr_prec(&mut self, min_prec: usize) -> Expr {
+        let mut lhs = self.parse_primary();
+
         while self.ok() {
-            let operator = match self.peek().kind {
-                TokenKind::Add => BinOp::Add,
-                TokenKind::Subtract => BinOp::Subtract,
-                _ => return expr
-            };
-    
-            self.cursor += 1;
-            
-            expr = Expr::Binary { op: operator, left: Box::new(expr), right: Box::new(self.parse_term()) };
+            if let Some(b) = &mut convert_binop(self.peek().kind) {
+                if b.prec() > min_prec {
+                    break;
+                }
+
+                let next_min_prec = if b.assoc() == 0 {
+                    b.prec() - 1
+                } else {
+                    b.prec()
+                };
+
+                let operator = match self.peek().kind {
+                    TokenKind::Add => BinOp::Add,
+                    TokenKind::Subtract => BinOp::Subtract,
+                    TokenKind::Multiply => BinOp::Multiply,
+                    TokenKind::Divide => BinOp::Divide,
+                    _ => panic!("expected operator at {:?}", self.peek().kind)
+                };
+
+                self.cursor += 1;
+
+                lhs = Expr::Binary { op: operator, left: Box::new(lhs), right: Box::new(self.parse_expr_prec(next_min_prec)) };
+            } else {
+                break
+            }
         }
 
-        expr
+        lhs
     }
 
     pub fn parse_statement(&mut self) -> Stmt {
         let tok = self.peek();
 
-        if tok.kind == TokenKind::Variable &&
-        self.inbounds(1) && 
-        self.tokens[self.cursor+1].kind == TokenKind::Equals {
-            self.cursor += 2;
+        if let Some(t) = self.convert_type() {
+            self.expect(TokenKind::Identifier);
 
-            let mut expr = self.parse_expr();
-
-            if let Expr::FnDefine(_, args, body) = expr {
-                expr = Expr::FnDefine(tok.value.clone(), args, body)
-            }
-
-            return Stmt::Assignment(tok.value, expr)
-        } else if tok.kind == TokenKind::Return {
+            let name = self.peek().value;
             self.cursor += 1;
 
-            return Stmt::Return(self.parse_expr())
+            self.expect(TokenKind::Equals);
+            self.cursor += 1;
+
+            return Stmt::VarDeclare(t, name, self.parse_expr())
+        } else {
+            match tok.kind {
+                TokenKind::Identifier => {
+                    if self.inbounds(2) && self.tokens[self.cursor+1].kind == TokenKind::Equals {
+                        self.cursor += 2;
+                        return Stmt::VarAssign(tok.value, self.parse_expr())
+                    } else if self.tokens[self.cursor+1].kind == TokenKind::OpenParen {
+                        self.cursor += 1;
+                        return Stmt::Expr(self.parse_fn_call(tok.value))
+                    }
+                },
+                TokenKind::Return => {
+                    self.cursor += 1;
+
+                    return Stmt::Return(self.parse_expr())
+                },
+                TokenKind::Fn => {
+                    self.cursor += 1;
+
+                    self.expect(TokenKind::Identifier);
+
+                    let name = self.peek().value;
+                    self.cursor += 1;
+
+                    self.expect(TokenKind::OpenParen);
+                    self.cursor += 1;
+
+                    let mut args: Vec<Arg> = vec![];
+
+                    while self.peek().kind != TokenKind::CloseParen {
+                        if let Some(t) = self.convert_type() {
+                            self.expect(TokenKind::Identifier);
+
+                            args.push(Arg{typ: t, name: self.peek().value});
+                            self.cursor += 1;
+
+                            if self.peek().kind == TokenKind::Comma {
+                                self.cursor += 1;
+                            }
+                        } else {
+                            panic!("expected type")
+                        }
+                    }
+
+                    self.cursor += 1;
+
+                    let t = if let Some(t) = self.convert_type() {
+                        t
+                    } else if self.peek().kind == TokenKind::OpenCurly {
+                        Type::Void
+                    } else {
+                        panic!("expected type or block")
+                    };
+
+                    return Stmt::FnDefine(Signature { name, args: args.clone(), return_type: t }, self.parse_block())
+                },
+                _ => ()
+            }
         }
 
         Stmt::Expr(self.parse_expr())
@@ -330,13 +365,27 @@ impl<'a> Parser<'a> {
     pub fn parse(&mut self) {
         while self.ok() {
             let stmt = self.parse_statement();
-            self.program.push(stmt);
+            self.program.push(stmt.clone());
+
+            if let Stmt::FnDefine(_, _) = stmt {
+            } else {
+                self.expect(TokenKind::Semi);
+                self.cursor += 1;
+            }
         }
     }
 
-    pub fn eval(&mut self) {
-        for stmt in self.program.clone() { 
-            stmt.run(self.context);
-        };
+    pub fn to_c(&mut self) -> String {
+        let mut output = String::new();
+
+        for stmt in &mut self.program {
+            output += format!("{}\n", stmt.to_c()).as_str();
+
+            if let Stmt::FnDefine(_, _) = stmt {
+                output += "\n";
+            }
+        }
+
+        output
     }
 }

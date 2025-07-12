@@ -2,9 +2,11 @@ use std::vec::Vec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenKind {
-    Variable,
+    Identifier,
     NumberLiteral,
     StringLiteral,
+    TrueLiteral,
+    FalseLiteral,
     Add,
     Subtract,
     Multiply,
@@ -16,19 +18,46 @@ pub enum TokenKind {
     Equals,
     Fn,
     Comma,
-    Return
+    Return,
+    U8, U16, U32, U64,
+    I8, I16, I32, I64, 
+    F32, F64,
+    Char,
+    Bool,
+    Semi,
+    Amp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Token {
     pub kind: TokenKind,
-    pub value: String
+    pub value: String,
+    pub line: usize,
 }
 
 pub struct Tokenizer<'a> {
     pub source: &'a str,
     pub tokens: Vec<Token>,
-    pub cursor: usize
+    pub cursor: usize,
+    pub line: usize,
+}
+
+pub fn get_type(t: String) -> Option<TokenKind> {
+    match t.as_str() {
+        "u8" => Some(TokenKind::U8),
+        "u16" => Some(TokenKind::U16),
+        "u32" => Some(TokenKind::U32),
+        "u64" => Some(TokenKind::U64),
+        "i8" => Some(TokenKind::I8),
+        "i16" => Some(TokenKind::I16),
+        "i32" => Some(TokenKind::I32),
+        "i64" => Some(TokenKind::I64),
+        "f32" => Some(TokenKind::F32),
+        "f64" => Some(TokenKind::F64),
+        "char" => Some(TokenKind::Char),
+        "bool" => Some(TokenKind::Bool),
+        _ => None
+    }
 }
 
 impl<'a> Tokenizer<'a> {
@@ -36,7 +65,8 @@ impl<'a> Tokenizer<'a> {
         Tokenizer {
             source,
             tokens: Vec::new(),
-            cursor: 0
+            cursor: 0,
+            line: 1
         }
     }
 
@@ -53,16 +83,16 @@ impl<'a> Tokenizer<'a> {
             return c
         }
 
-        return 0 as char
+        0 as char
     }
 
     fn push_token(&mut self, kind: TokenKind, value: String) {
-        self.tokens.push(Token{kind, value})
+        self.tokens.push(Token{line: self.line, kind, value})
     }
 
     fn is_symbol(&mut self) -> bool {
         match self.peek() {
-            '(' | ')' | '{' | '}' | '+' | '-' | '*' | '/' | '=' | ',' => true,
+            '(' | ')' | '{' | '}' | '+' | '-' | '*' | '/' | '=' | ',' | ';' | '&' => true,
             _ => false
         }
     }
@@ -72,8 +102,12 @@ impl<'a> Tokenizer<'a> {
             let c = self.peek();
 
             if c.is_whitespace() {
-                self.cursor += c.len_utf8();
-                continue
+                if c == '\n' {
+                    self.line += 1;
+                }
+
+                self.cursor += 1;
+                continue        
             }
 
             if c.is_ascii_alphabetic() || c == '_' {
@@ -94,7 +128,7 @@ impl<'a> Tokenizer<'a> {
     fn consume_identifier(&mut self) {
         let mut ident = String::from("");
 
-        while self.ok() && self.peek().is_ascii_alphabetic() || self.peek() == '_' {
+        while self.ok() && (self.peek().is_alphanumeric() || self.peek() == '_') {
             ident.push(self.peek());
             self.cursor += 1;
         }
@@ -103,7 +137,11 @@ impl<'a> Tokenizer<'a> {
             return self.push_token(keyword, ident);
         }
 
-        self.push_token(TokenKind::Variable, ident);
+        if let Some(t) = get_type(ident.clone()) {
+            return self.push_token(t, ident);
+        }
+
+        self.push_token(TokenKind::Identifier, ident);
     }
 
     fn consume_number(&mut self) {
@@ -135,7 +173,9 @@ impl<'a> Tokenizer<'a> {
     fn get_keyword(&mut self, keyword: String) -> Option<TokenKind> {
         match keyword.as_str() {
             "fn" => Some(TokenKind::Fn),
-            "return" => Some(TokenKind::Return),
+            "ret" => Some(TokenKind::Return),
+            "true" => Some(TokenKind::TrueLiteral),
+            "false" => Some(TokenKind::FalseLiteral),
             _ => None
         }
     }
@@ -144,14 +184,16 @@ impl<'a> Tokenizer<'a> {
         match self.peek() {
             '(' => self.push_token(TokenKind::OpenParen, '('.to_string()),
             ')' => self.push_token(TokenKind::CloseParen, ')'.to_string()),
-            '{' => self.push_token(TokenKind::OpenCurly, '('.to_string()),
-            '}' => self.push_token(TokenKind::CloseCurly, ')'.to_string()),
+            '{' => self.push_token(TokenKind::OpenCurly, '{'.to_string()),
+            '}' => self.push_token(TokenKind::CloseCurly, '}'.to_string()),
             '+' => self.push_token(TokenKind::Add, '+'.to_string()),
             '-' => self.push_token(TokenKind::Subtract, '-'.to_string()),
             '*' => self.push_token(TokenKind::Multiply, '*'.to_string()),
             '/' => self.push_token(TokenKind::Divide, '/'.to_string()),
             '=' => self.push_token(TokenKind::Equals, '='.to_string()),
             ',' => self.push_token(TokenKind::Comma, ','.to_string()),
+            ';' => self.push_token(TokenKind::Semi, ';'.to_string()),
+            '&' => self.push_token(TokenKind::Amp, '&'.to_string()),
             tok => println!("unknown token: {}", tok)
         }
 
